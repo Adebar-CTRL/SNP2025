@@ -1,64 +1,73 @@
 #include <avr/io.h>
 #include <util/delay.h>
+#include <avr/interrupt.h>
+int currentBrightnessLevel = 1;
 
-void count_on_port(volatile uint8_t *port, uint8_t value, uint8_t bits)
-{
-    *port = value;  // Setze den Port-Wert auf die aktuelle Zahl
+void PWM_Init(void) {
+
+
+    TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, clear on compare match
+    TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
+
+    OCR1A = 156; // For minutes cathodes (PB1)
+    OCR1B = 156; // For hours cathodes (PB2)
 }
 
-int main(void)
-{
-    // Setze PB1 und PB2 als Ausg‰nge (f¸r PWM)
+
+void setupPorts(void) {
+    // --- PWM Outputs for Cathodes on Port B ---
+    // PB1 for minutes, PB2 for hours.
     DDRB |= (1 << PB1) | (1 << PB2);
 
-    // Timer 1 Konfiguration f¸r PB1 (OC1A)
-    TCCR1B |= (1 << CS00); // prescaler = 1
-    OCR1A = 50;  // Setze die PWM Periode f¸r PB1
-    OCR1B = 50;  // Setze die PWM Periode f¸r PB1
-    TCCR1A |= (1 << WGM11); // Fast PWM Mode
-    TCCR1A |= (1 << COM1A1) | (1 << COM1A0); // Set OC1A on match, clear on top
-    TCCR1A |= (1 << COM1B1) | (1 << COM1B0); // Set OC1B on match, clear on top
+	// Setze Port C (PC0 bis PC5) und Port D (PD3 bis PD7) als Ausg√§nge
+    DDRC = 0x3F;  // PC0 bis PC5 als Ausgang
+    DDRD = 0xF8;  // PD3 bis PD7 als Ausgang (PD0 bis PD2 bleiben Eingang)
 
-    // Timer 0 Konfiguration f¸r PB2 (OC0A)
-    TCCR0A |= (1 << WGM00) | (1 << WGM01); // Fast PWM Mode
-    TCCR0A |= (1 << COM0A1) | (1 << COM0A0); // Set OC0A on match, clear on top
-    TCCR0B |= (1 << CS00); // prescaler = 1
-    OCR0A = 50;  // Setze die PWM Periode f¸r PB2
-
-     // Setze PC0 bis PC5 und PD3 bis PD7 als Ausg‰nge
-    DDRC = 0x3F;  // PC0 bis PC5 als Ausgang (6 Ausg‰nge)
-    DDRD = 0xF8;  // PD3 bis PD7 als Ausgang (5 Ausg‰nge)
-
-    // Initialisiere die Ausg‰nge mit 0 (alle LEDs aus)
+    // Initialisiere die Ports mit 0 (alle LEDs aus)
     PORTC = 0x00;
     PORTD = 0x00;
 
-    uint8_t minutes = 0;  // Minuten (0 bis 59)
-    uint8_t hours = 0;    // Stunden (0 bis 23)
+}
 
+void INT0_Init(void) {
+    // Konfiguriere PD2 (INT0) als Eingang mit aktiviertem Pull-Up
+    DDRD &= ~(1 << PD2);
+    PORTD |= (1 << PD2);
+
+    // Konfiguriere INT0: Ausl√∂sung an fallender Flanke
+    EICRA |= (1 << ISC01);  // ISC01 = 1, ISC00 = 0 => fallende Flanke
+    EICRA &= ~(1 << ISC00);
+
+    // Aktiviere den externen Interrupt INT0
+    EIMSK |= (1 << INT0);
+}
+
+//Interrupt bei Button 2
+ISR(INT0_vect) {
+	const uint8_t brightness_levels[] = {254, 248, 156, 0};
+    _delay_ms(5); // Debounce
+    if (!(PIND & (1 << PD2))) { // Confirm button is still pressed
+		currentBrightnessLevel = (currentBrightnessLevel + 1) % 4;
+    	OCR1A = brightness_levels[currentBrightnessLevel]; // For minutes cathodes (PB1)
+    	OCR1B = brightness_levels[currentBrightnessLevel]; // For hours cathodes (PB2)
+	}
+}
+int main(void)
+{
+	
+	setupPorts();
+	INT0_Init();
+//	external_interrupts_Init();
+	PWM_Init(); //initialisiere PWM ausg√§nge f√ºr helligkeitsregulierung
+    sei();  // Enable global interrupts
     // Unendliche Schleife
     while (1)
     {
-        // Setze Port C auf die Minuten (0 bis 59)
-        count_on_port(&PORTC, minutes, 6); // Minuten im Bereich 0 bis 59 (6 Bits)
-
-        // Setze Port D auf die Stunden (0 bis 23)
-        count_on_port(&PORTD, hours, 5); // Stunden im Bereich 0 bis 23 (5 Bits)
-
-        _delay_ms(1000);  // Warte 1 Sekunde (Simuliere 1 Sekunde f¸r die Uhr)
-
-        // Erhˆhe die Minuten und ¸berpr¸fe den ‹berlauf (0 bis 59)
-        minutes++;
-        if (minutes >= 60)
-        {
-            minutes = 0;  // Zur¸cksetzen der Minuten
-            // Erhˆhe die Stunden und ¸berpr¸fe den ‹berlauf (0 bis 23)
-            hours++;
-            if (hours >= 24)
-            {
-                hours = 0;  // Zur¸cksetzen der Stunden
-            }
-        }
+        // Z√§hle f√ºr Port C (PC0 bis PC5)
+        PORTC++;  // Inkrementiere PORTC
+        // Z√§hle f√ºr Port D (PD3 bis PD7)
+        PORTD++;  // Inkrementiere PORTD
+        _delay_ms(400);  // Warte f√ºr 50ms
     }
 
     return 0;  // Dies wird nie erreicht
