@@ -1,6 +1,9 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
+
+volatile uint8_t minutes = 0;
+volatile uint8_t hours = 0;
 int currentBrightnessLevel = 1;
 
 void PWM_Init(void) {
@@ -8,11 +11,24 @@ void PWM_Init(void) {
 
     TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, clear on compare match
     TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
-
+	
     OCR1A = 156; // For minutes cathodes (PB1)
     OCR1B = 156; // For hours cathodes (PB2)
 }
 
+void setupTimer2(void) {
+    // Asynchronmodus aktivieren (externer 32.768 kHz Quarz)
+    ASSR |= (1 << AS2);
+    
+    // Prescaler auf 128 setzen (32.768 kHz / 128 = 256 Hz)
+    TCCR2B = (1 << CS22) | (1 << CS20); // Prescaler 128
+	TIMSK2 = (1 << TOIE2);           // Enable Timer2 Overflow interrupt
+    // (If using an external clock, wait for clock stabilization)
+    // Wait for the external clock to stabilize
+    while (ASSR & ((1 << TCR2BUB) | (1 << TCR2AUB) | (1 << OCR2AUB) | (1 << TCN2UB))) {
+      // Wait until all update busy flags are cleared
+    }
+}
 
 void setupPorts(void) {
     // --- PWM Outputs for Cathodes on Port B ---
@@ -28,7 +44,7 @@ void setupPorts(void) {
     PORTD = 0x00;
 
 }
-
+//setup von Knöpfen
 void INT0_Init(void) {
     // Konfiguriere PD2 (INT0) als Eingang mit aktiviertem Pull-Up
     DDRD &= ~(1 << PD2);
@@ -42,6 +58,34 @@ void INT0_Init(void) {
     EIMSK |= (1 << INT0);
 }
 
+
+void displayTime(void) {
+    // Minuten auf PC0-PC5 (6 Bits)
+    PORTC = minutes & 0x3F;  
+    
+    // Stunden auf PD3-PD7 (5 Bits)
+    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3); //& 0x07 bedeutet das nur die unteren drei Bits (PD0, PD1, PD2) erhalten bleiben. 
+	//Dann wird hours 3 bits nach links geschoben und mit PortD durch | vereinigt
+
+}
+
+void updateClock(void) {
+    minutes++;
+    if (minutes >= 60) {
+        minutes = 0;
+        hours++;
+        if (hours >= 24) {
+            hours = 0;
+        }
+    }
+    displayTime();
+}
+
+//Interrupt der jede Sekunde durch den Quarz ausgelöst wird
+ISR(TIMER2_OVF_vect) {
+    updateClock();  // Erhöhe Minuten jede Sekunde
+}
+
 //Interrupt bei Button 2
 ISR(INT0_vect) {
 	const uint8_t brightness_levels[] = {254, 248, 156, 0};
@@ -52,22 +96,19 @@ ISR(INT0_vect) {
     	OCR1B = brightness_levels[currentBrightnessLevel]; // For hours cathodes (PB2)
 	}
 }
+
 int main(void)
 {
-	
+	int pd_counter = 1;
 	setupPorts();
 	INT0_Init();
-//	external_interrupts_Init();
 	PWM_Init(); //initialisiere PWM ausgänge für helligkeitsregulierung
     sei();  // Enable global interrupts
     // Unendliche Schleife
     while (1)
     {
-        // Zähle für Port C (PC0 bis PC5)
-        PORTC++;  // Inkrementiere PORTC
-        // Zähle für Port D (PD3 bis PD7)
-        PORTD++;  // Inkrementiere PORTD
-        _delay_ms(400);  // Warte für 50ms
+	//updateClock();
+	//_delay_ms(5); 
     }
 
     return 0;  // Dies wird nie erreicht
