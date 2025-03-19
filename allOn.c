@@ -1,11 +1,14 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
+#include <avr/sleep.h>
 
 volatile uint8_t seconds = 0;
 volatile uint8_t minutes = 0;
 volatile uint8_t hours = 0;
 int currentBrightnessLevel = 1;
+int ledsON = 1;
+
 
 void PWM_Init(void) {
 
@@ -71,13 +74,14 @@ void INT_Init(void) {
 
 
 void displayTime(void) {
-    // Minuten auf PC0-PC5 (6 Bits)
-    PORTC = minutes & 0x3F;  
+	//if(ledsON) {
+	    // Minuten auf PC0-PC5 (6 Bits)
+	    PORTC = minutes & 0x3F;  
     
-    // Stunden auf PD3-PD7 (5 Bits)
-    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3); //& 0x07 bedeutet das nur die unteren drei Bits (PD0, PD1, PD2) erhalten bleiben. 
-	//Dann wird hours 3 bits nach links geschoben und mit PortD durch | vereinigt
-
+	    // Stunden auf PD3-PD7 (5 Bits)
+	    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3); //& 0x07 bedeutet das nur die unteren drei Bits (PD0, PD1, PD2) erhalten bleiben. 
+		//Dann wird hours 3 bits nach links geschoben und mit PortD durch | vereinigt
+//	}
 }
 
 void updateClock(void) {
@@ -96,6 +100,25 @@ void updateClock(void) {
     displayTime();
 }
 
+void enterSleepMode(void) {
+    set_sleep_mode(SLEEP_MODE_IDLE); // "Idle"-Modus (CPU stoppt, Timer läuft weiter)
+    sleep_enable();
+    sei(); // Interrupts aktivieren
+    sleep_cpu(); // Jetzt schlafen gehen...
+    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
+}
+
+void toggleLEDS(void) {
+	if(ledsON) {
+		ledsON = 0;
+		PORTC = 0x00;
+	    PORTD = (PORTD & 0x07);
+	}
+	else {
+		ledsON = 1;
+		displayTime();
+	}
+}
 //Interrupt der jede Sekunde durch den Quarz ausgelöst wird
 ISR(TIMER2_OVF_vect) {
 	const uint8_t brightness_levels[] = {254, 248, 156, 0};
@@ -111,35 +134,30 @@ ISR(TIMER2_OVF_vect) {
 ISR(INT0_vect) {
 	_delay_ms(5); // Debounce
     if (!(PIND & (1 << PD2))) {  // Prüfen, ob PB0 gedrückt wurde
-        if (minutes == 59) minutes = 0;
-		else {
-			minutes++;
-			displayTime();
-		}
+		minutes++;
+	    if (minutes >= 60) {
+	        minutes = 0;
+	        hours++;
+	        if (hours >= 24) {
+	            hours = 0;
+	        }
+	    }
+		displayTime();
     }
-	/*
-	const uint8_t brightness_levels[] = {254, 248, 156, 0};
-    _delay_ms(5); // Debounce
-    if (!(PIND & (1 << PD2))) { // Confirm button is still pressed
-		currentBrightnessLevel = (currentBrightnessLevel + 1) % 4;
-    	OCR1A = brightness_levels[currentBrightnessLevel]; // For minutes cathodes (PB1)
-    	OCR1B = brightness_levels[currentBrightnessLevel]; // For hours cathodes (PB2)
-	}*/
 }
 
 ISR(PCINT0_vect) {
     _delay_ms(5); // Debounce
     if (!(PINB & (1 << PB0))) {  // Prüfen, ob PB0 gedrückt wurde
-        if (hours == 11) hours = 0;
-		else {
-			hours++;
-			displayTime();
-		}
+       hours++;
+        if (hours >= 24) {
+            hours = 0;
+        }
+		displayTime();
     }
 }
 int main(void)
 {
-	int pd_counter = 1;
 	setupPorts();
 	INT_Init();
 	PWM_Init(); //initialisiere PWM ausgänge für helligkeitsregulierung
@@ -148,8 +166,8 @@ int main(void)
     // Unendliche Schleife
     while (1)
     {
-	//updateClock();
-	//_delay_ms(5); 
+	enterSleepMode();
+	_delay_ms(5); 
     }
 
     return 0;  // Dies wird nie erreicht
