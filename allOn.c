@@ -7,8 +7,7 @@ volatile uint8_t seconds = 0;
 volatile uint8_t minutes = 0;
 volatile uint8_t hours = 0;
 int currentBrightnessLevel = 1;
-int ledsON = 1;
-
+const uint8_t brightness_levels[] = {255, 254, 248, 156, 0};
 
 void PWM_Init(void) {
 
@@ -16,8 +15,8 @@ void PWM_Init(void) {
     TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, clear on compare match
     TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
 	
-    OCR1A = 156; // For minutes cathodes (PB1)
-    OCR1B = 156; // For hours cathodes (PB2)
+    OCR1A = 248; // For minutes cathodes (PB1)
+    OCR1B = 248; // For hours cathodes (PB2)
 }
 
 void setupTimer2(void) {
@@ -32,6 +31,15 @@ void setupTimer2(void) {
     while (ASSR & ((1 << TCR2BUB) | (1 << TCR2AUB) | (1 << OCR2AUB) | (1 << TCN2UB))) {
       // Wait until all update busy flags are cleared
     }
+}
+
+
+void enterSleepMode(void) {
+    set_sleep_mode(SLEEP_MODE_IDLE); // "Idle"-Modus (CPU stoppt, Timer läuft weiter)
+    sleep_enable();
+    sei(); // Interrupts aktivieren
+    sleep_cpu(); // Jetzt schlafen gehen...
+    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
 }
 
 void setupPorts(void) {
@@ -74,14 +82,13 @@ void INT_Init(void) {
 
 
 void displayTime(void) {
-	//if(ledsON) {
-	    // Minuten auf PC0-PC5 (6 Bits)
-	    PORTC = minutes & 0x3F;  
+    // Minuten auf PC0-PC5 (6 Bits)
+    PORTC = minutes & 0x3F;  
     
-	    // Stunden auf PD3-PD7 (5 Bits)
-	    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3); //& 0x07 bedeutet das nur die unteren drei Bits (PD0, PD1, PD2) erhalten bleiben. 
-		//Dann wird hours 3 bits nach links geschoben und mit PortD durch | vereinigt
-//	}
+    // Stunden auf PD3-PD7 (5 Bits)
+    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3); //& 0x07 bedeutet das nur die unteren drei Bits (PD0, PD1, PD2) erhalten bleiben. 
+	//Dann wird hours 3 bits nach links geschoben und mit PortD durch | vereinigt
+
 }
 
 void updateClock(void) {
@@ -100,31 +107,11 @@ void updateClock(void) {
     displayTime();
 }
 
-void enterSleepMode(void) {
-    set_sleep_mode(SLEEP_MODE_IDLE); // "Idle"-Modus (CPU stoppt, Timer läuft weiter)
-    sleep_enable();
-    sei(); // Interrupts aktivieren
-    sleep_cpu(); // Jetzt schlafen gehen...
-    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
-}
-
-void toggleLEDS(void) {
-	if(ledsON) {
-		ledsON = 0;
-		PORTC = 0x00;
-	    PORTD = (PORTD & 0x07);
-	}
-	else {
-		ledsON = 1;
-		displayTime();
-	}
-}
 //Interrupt der jede Sekunde durch den Quarz ausgelöst wird
 ISR(TIMER2_OVF_vect) {
-	const uint8_t brightness_levels[] = {254, 248, 156, 0};
     updateClock();  // Erhöhe Minuten jede Sekunde
 	if (!(PIND & (1 << PD1))) {
-		currentBrightnessLevel = (currentBrightnessLevel + 1) % 4;
+		currentBrightnessLevel = (currentBrightnessLevel + 1) % 5;
     	OCR1A = brightness_levels[currentBrightnessLevel]; // For minutes cathodes (PB1)
     	OCR1B = brightness_levels[currentBrightnessLevel]; // For hours cathodes (PB2)
 	}
@@ -134,7 +121,7 @@ ISR(TIMER2_OVF_vect) {
 ISR(INT0_vect) {
 	_delay_ms(5); // Debounce
     if (!(PIND & (1 << PD2))) {  // Prüfen, ob PB0 gedrückt wurde
-		minutes++;
+        minutes++;
 	    if (minutes >= 60) {
 	        minutes = 0;
 	        hours++;
@@ -142,18 +129,18 @@ ISR(INT0_vect) {
 	            hours = 0;
 	        }
 	    }
-		displayTime();
+    	displayTime();
     }
 }
 
 ISR(PCINT0_vect) {
     _delay_ms(5); // Debounce
     if (!(PINB & (1 << PB0))) {  // Prüfen, ob PB0 gedrückt wurde
-       hours++;
-        if (hours >= 24) {
-            hours = 0;
-        }
-		displayTime();
+        if (hours == 23) hours = 0;
+		else {
+			hours++;
+		}
+	displayTime();
     }
 }
 int main(void)
@@ -166,7 +153,7 @@ int main(void)
     // Unendliche Schleife
     while (1)
     {
-	enterSleepMode();
+	enterSleepMode();	
 	_delay_ms(5); 
     }
 
