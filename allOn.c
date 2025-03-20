@@ -8,6 +8,7 @@ volatile uint8_t minutes = 0;
 volatile uint8_t hours = 0;
 int currentBrightnessLevel = 1;
 const uint8_t brightness_levels[] = {255, 254, 248, 156, 0};
+int deepSleep= 0;
 
 void PWM_Init(void) {
 
@@ -34,12 +35,33 @@ void setupTimer2(void) {
 }
 
 
+void setupSleepMode() {
+    set_sleep_mode(SLEEP_MODE_IDLE); // Tiefster Energiesparmodus
+   // sleep_enable();
+  //  sei(); // Globale Interrupts aktivieren
+	/*
+	PRR |= (1 << PRADC);    // ADC (Analog-Digital-Wandler) deaktivieren
+	PRR |= (1 << PRUSART0); // UART (Serielle Kommunikation) deaktivieren
+	PRR |= (1 << PRTWI); // TWI (I2C) deaktivieren */
+}
+
 void enterSleepMode(void) {
-    set_sleep_mode(SLEEP_MODE_IDLE); // "Idle"-Modus (CPU stoppt, Timer läuft weiter)
-    sleep_enable();
-    sei(); // Interrupts aktivieren
-    sleep_cpu(); // Jetzt schlafen gehen...
-    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
+	if(deepSleep == 0) {
+		setupSleepMode();
+		cli();  // Interrupts vor dem Schlafen deaktivieren
+	    sleep_enable();
+	    sei();  // Interrupts aktivieren (ermöglicht Aufwecken)
+	    sleep_cpu(); // MCU schläft jetzt
+	    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
+	}
+    else {
+		set_sleep_mode(SLEEP_MODE_PWR_SAVE); // Tiefster Energiesparmodus
+    	cli();
+		sleep_enable();
+		sei();  // Interrupts aktivieren (ermöglicht Aufwecken)
+	    sleep_cpu(); // MCU schläft jetzt
+	    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
+	}
 }
 
 void setupPorts(void) {
@@ -115,6 +137,16 @@ ISR(TIMER2_OVF_vect) {
     	OCR1A = brightness_levels[currentBrightnessLevel]; // For minutes cathodes (PB1)
     	OCR1B = brightness_levels[currentBrightnessLevel]; // For hours cathodes (PB2)
 	}
+	if(currentBrightnessLevel == 0) {
+		PORTC = 0 & 0x3F;  
+    
+	    // Stunden auf PD3-PD7 (5 Bits)
+	    PORTD = (PORTD & 0x07) | ((0 & 0x1F) << 3);
+		deepSleep = 1;
+	}
+	else {
+		deepSleep = 0;
+	}
 }
 
 //Interrupt bei Button 2
@@ -151,10 +183,10 @@ int main(void)
 	setupTimer2();
     sei();  // Enable global interrupts
     // Unendliche Schleife
-    while (1)
+	while (1)
     {
 	enterSleepMode();	
-	_delay_ms(5); 
+	//_delay_ms(5); 
     }
 
     return 0;  // Dies wird nie erreicht
