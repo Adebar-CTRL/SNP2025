@@ -35,19 +35,15 @@ void setupTimer2(void) {
 }
 
 
-void setupSleepMode() {
-    set_sleep_mode(SLEEP_MODE_IDLE); // Tiefster Energiesparmodus
-   // sleep_enable();
-  //  sei(); // Globale Interrupts aktivieren
-	/*
+void disablePeripherie() {
 	PRR |= (1 << PRADC);    // ADC (Analog-Digital-Wandler) deaktivieren
 	PRR |= (1 << PRUSART0); // UART (Serielle Kommunikation) deaktivieren
-	PRR |= (1 << PRTWI); // TWI (I2C) deaktivieren */
+	PRR |= (1 << PRTWI); // TWI (I2C) deaktivieren 
 }
 
 void enterSleepMode(void) {
 	if(deepSleep == 0) {
-		setupSleepMode();
+		set_sleep_mode(SLEEP_MODE_IDLE);
 		cli();  // Interrupts vor dem Schlafen deaktivieren
 	    sleep_enable();
 	    sei();  // Interrupts aktivieren (ermöglicht Aufwecken)
@@ -183,6 +179,7 @@ int main(void)
 	setupTimer2();
     sei();  // Enable global interrupts
     // Unendliche Schleife
+	disablePeripherie();
 	while (1)
     {
 	enterSleepMode();	
