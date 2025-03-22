@@ -3,188 +3,191 @@
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 
+// Globale Variablen für Uhrzeit
 volatile uint8_t seconds = 0;
 volatile uint8_t minutes = 0;
 volatile uint8_t hours = 0;
+
+// Helligkeitsstufen für PWM
 int currentBrightnessLevel = 1;
 const uint8_t brightness_levels[] = {255, 254, 248, 156, 0};
-int deepSleep= 0;
 
+int deepSleep = 0;
+
+// PWM initialisieren
 void PWM_Init(void) {
-
-
     TCCR1A = (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // 8-bit Fast PWM, clear on compare match
     TCCR1B = (1 << WGM12) | (1 << CS11); // Prescaler = 8
-	
-    OCR1A = 248; // For minutes cathodes (PB1)
-    OCR1B = 248; // For hours cathodes (PB2)
+
+    OCR1A = 248; // PWM-Wert für Minuten (PB1)
+    OCR1B = 248; // PWM-Wert für Stunden (PB2)
 }
 
+// Timer2 für die Uhrzeit initialisieren
 void setupTimer2(void) {
-    // Asynchronmodus aktivieren (externer 32.768 kHz Quarz)
-    ASSR |= (1 << AS2);
-    
+    ASSR |= (1 << AS2); // Asynchronmodus aktivieren (32.768 kHz Quarz)
+
     // Prescaler auf 128 setzen (32.768 kHz / 128 = 256 Hz)
-    TCCR2B = (1 << CS22) | (1 << CS20); // Prescaler 128
-	TIMSK2 = (1 << TOIE2);           // Enable Timer2 Overflow interrupt
-    // (If using an external clock, wait for clock stabilization)
-    // Wait for the external clock to stabilize
+    TCCR2B = (1 << CS22) | (1 << CS20);
+    TIMSK2 = (1 << TOIE2); // Timer Overflow Interrupt aktivieren
+
+    // Warten, bis der externe Takt stabil ist
     while (ASSR & ((1 << TCR2BUB) | (1 << TCR2AUB) | (1 << OCR2AUB) | (1 << TCN2UB))) {
-      // Wait until all update busy flags are cleared
+        // Warten, bis alle Busy-Flags gelöscht sind
     }
 }
 
-
-void disablePeripherie() {
-	PRR |= (1 << PRADC);    // ADC (Analog-Digital-Wandler) deaktivieren
-	PRR |= (1 << PRUSART0); // UART (Serielle Kommunikation) deaktivieren
-	PRR |= (1 << PRTWI); // TWI (I2C) deaktivieren 
+// Nicht benötigte Peripherie deaktivieren
+void disablePeripherie(void) {
+    PRR |= (1 << PRADC);    // ADC deaktivieren
+    PRR |= (1 << PRUSART0); // UART deaktivieren
+    PRR |= (1 << PRTWI);    // I2C deaktivieren
 }
 
+// Schlafmodus aktivieren
 void enterSleepMode(void) {
-	if(deepSleep == 0) {
-		set_sleep_mode(SLEEP_MODE_IDLE);
-		cli();  // Interrupts vor dem Schlafen deaktivieren
-	    sleep_enable();
-	    sei();  // Interrupts aktivieren (ermöglicht Aufwecken)
-	    sleep_cpu(); // MCU schläft jetzt
-	    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
-	}
-    else {
-		set_sleep_mode(SLEEP_MODE_PWR_SAVE); // Tiefster Energiesparmodus
-    	cli();
-		sleep_enable();
-		sei();  // Interrupts aktivieren (ermöglicht Aufwecken)
-	    sleep_cpu(); // MCU schläft jetzt
-	    sleep_disable(); // Nach dem Aufwachen Sleep-Modus deaktivieren
-	}
+    if (deepSleep == 0) {
+        set_sleep_mode(SLEEP_MODE_IDLE);
+    } else {
+        set_sleep_mode(SLEEP_MODE_PWR_SAVE);
+    }
+
+    cli(); // Interrupts deaktivieren
+    sleep_enable();
+    sei(); // Interrupts aktivieren (zum Aufwecken)
+    sleep_cpu(); // MCU schläft jetzt
+    sleep_disable(); // Nach dem Aufwachen deaktivieren
 }
 
+// Ports initialisieren
 void setupPorts(void) {
-    // --- PWM Outputs for Cathodes on Port B ---
-    // PB1 for minutes, PB2 for hours.
+    // PWM-Ausgänge für Minuten (PB1) und Stunden (PB2) setzen
     DDRB |= (1 << PB1) | (1 << PB2);
 
-	// Setze Port C (PC0 bis PC5) und Port D (PD3 bis PD7) als Ausgänge
-    DDRC = 0x3F;  // PC0 bis PC5 als Ausgang
-    DDRD = 0xF8;  // PD3 bis PD7 als Ausgang (PD0 bis PD2 bleiben Eingang)
+    // Port C (PC0 - PC5) und Port D (PD3 - PD7) als Ausgänge setzen
+    DDRC = 0x3F;
+    DDRD = 0xF8;
 
-    // Initialisiere die Ports mit 0 (alle LEDs aus)
+    // Alle LEDs ausschalten
     PORTC = 0x00;
     PORTD = 0x00;
-
 }
-//setup von Knöpfen
+
+// Interrupts für Buttons initialisieren
 void INT_Init(void) {
-    // Konfiguriere PD2 (INT0) als Eingang mit aktiviertem Pull-Up
+    // PD2 als Eingang mit Pull-Up für INT0 (Externer Interrupt)
     DDRD &= ~(1 << PD2);
     PORTD |= (1 << PD2);
-    // Konfiguriere INT0: Auslösung an fallender Flanke
-    EICRA |= (1 << ISC01);  // ISC01 = 1, ISC00 = 0 => fallende Flanke
+    
+    // Interrupt an fallender Flanke auslösen
+    EICRA |= (1 << ISC01);
     EICRA &= ~(1 << ISC00);
-    // Aktiviere den externen Interrupt INT0
-    EIMSK |= (1 << INT0);
+    EIMSK |= (1 << INT0); // Interrupt aktivieren
 
-	// === PD1 als normaler Button-Eingang mit Pull-Up (kein Interrupt) === druch: if (!(PIND & (1 << PD1))) {} prüfen
+    // PD1 als normaler Button mit Pull-Up (kein Interrupt)
     DDRD &= ~(1 << PD1);
     PORTD |= (1 << PD1);
-	
-	  // === PB0 (Pin-Change-Interrupt) als Eingang mit Pull-Up ===
+
+    // PB0 als Pin-Change-Interrupt Eingang mit Pull-Up
     DDRB &= ~(1 << PB0);
     PORTB |= (1 << PB0);
 
-    // Aktivieren von Pin-Change-Interrupts für PB0 (PCINT0)
-    PCICR |= (1 << PCIE0);  // Aktiviere Pin-Change-Interrupt für PCINT[7:0] (Port B)
-    PCMSK0 |= (1 << PCINT0); // PB0 (PCINT0) als Pin-Change-Interrupt aktivieren
+    // Pin-Change-Interrupt für PB0 aktivieren
+    PCICR |= (1 << PCIE0);
+    PCMSK0 |= (1 << PCINT0);
 }
 
-
+// Uhrzeit auf den Binärausgängen anzeigen
 void displayTime(void) {
     // Minuten auf PC0-PC5 (6 Bits)
-    PORTC = minutes & 0x3F;  
-    
-    // Stunden auf PD3-PD7 (5 Bits)
-    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3); //& 0x07 bedeutet das nur die unteren drei Bits (PD0, PD1, PD2) erhalten bleiben. 
-	//Dann wird hours 3 bits nach links geschoben und mit PortD durch | vereinigt
+    PORTC = minutes & 0x3F;
 
+    // Stunden auf PD3-PD7 (5 Bits)
+    PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3);
 }
 
+// Uhrzeit aktualisieren
 void updateClock(void) {
-	seconds++;
-	if(seconds >= 60) {
-		seconds = 0;
-		minutes++;
-	    if (minutes >= 60) {
-	        minutes = 0;
-	        hours++;
-	        if (hours >= 24) {
-	            hours = 0;
-	        }
-	    }
-	}
+    seconds++;
+    if (seconds >= 60) {
+        seconds = 0;
+        minutes++;
+        if (minutes >= 60) {
+            minutes = 0;
+            hours++;
+            if (hours >= 24) {
+                hours = 0;
+            }
+        }
+    }
     displayTime();
 }
 
-//Interrupt der jede Sekunde durch den Quarz ausgelöst wird
+// Interrupt: Timer-Überlauf (jede Sekunde)
 ISR(TIMER2_OVF_vect) {
-    updateClock();  // Erhöhe Minuten jede Sekunde
-	if (!(PIND & (1 << PD1))) {
-		currentBrightnessLevel = (currentBrightnessLevel + 1) % 5;
-    	OCR1A = brightness_levels[currentBrightnessLevel]; // For minutes cathodes (PB1)
-    	OCR1B = brightness_levels[currentBrightnessLevel]; // For hours cathodes (PB2)
-	}
-	if(currentBrightnessLevel == 0) {
-		PORTC = 0 & 0x3F;  
-    
-	    // Stunden auf PD3-PD7 (5 Bits)
-	    PORTD = (PORTD & 0x07) | ((0 & 0x1F) << 3);
-		deepSleep = 1;
-	}
-	else {
-		deepSleep = 0;
-	}
-}
+    updateClock();
 
-//Interrupt bei Button 2
-ISR(INT0_vect) {
-	_delay_ms(5); // Debounce
-    if (!(PIND & (1 << PD2))) {  // Prüfen, ob PB0 gedrückt wurde
-        minutes++;
-	    if (minutes >= 60) {
-	        minutes = 0;
-	        hours++;
-	        if (hours >= 24) {
-	            hours = 0;
-	        }
-	    }
-    	displayTime();
+    // Prüfen, ob der Button gedrückt wurde (Helligkeitsänderung)
+    if (!(PIND & (1 << PD1))) {
+        currentBrightnessLevel = (currentBrightnessLevel + 1) % 5;
+        OCR1A = brightness_levels[currentBrightnessLevel];
+        OCR1B = brightness_levels[currentBrightnessLevel];
+    }
+
+    // Wenn die Helligkeit auf 0 ist -> Tiefschlaf aktivieren
+    if (currentBrightnessLevel == 0) {
+        PORTC = 0 & 0x3F;
+        PORTD = (PORTD & 0x07) | ((0 & 0x1F) << 3);
+        deepSleep = 1;
+    } else {
+        deepSleep = 0;
     }
 }
 
+// Interrupt: Externer Interrupt für Minuten-Button
+ISR(INT0_vect) {
+    _delay_ms(5); // Debounce
+
+    if (!(PIND & (1 << PD2))) {
+        minutes++;
+        if (minutes >= 60) {
+            minutes = 0;
+            hours++;
+            if (hours >= 24) {
+                hours = 0;
+            }
+        }
+        displayTime();
+    }
+}
+
+// Interrupt: Pin-Change-Interrupt für Stunden-Button
 ISR(PCINT0_vect) {
     _delay_ms(5); // Debounce
-    if (!(PINB & (1 << PB0))) {  // Prüfen, ob PB0 gedrückt wurde
-        if (hours == 23) hours = 0;
-		else {
-			hours++;
-		}
-	displayTime();
+
+    if (!(PINB & (1 << PB0))) {
+        if (hours == 23) {
+            hours = 0;
+        } else {
+            hours++;
+        }
+        displayTime();
     }
 }
-int main(void)
-{
-	setupPorts();
-	INT_Init();
-	PWM_Init(); //initialisiere PWM ausgänge für helligkeitsregulierung
-	setupTimer2();
-    sei();  // Enable global interrupts
-    // Unendliche Schleife
-	disablePeripherie();
-	while (1)
-    {
-	enterSleepMode();	
-	//_delay_ms(5); 
+
+// Hauptprogramm
+int main(void) {
+    setupPorts();
+    INT_Init();
+    PWM_Init();  // PWM für Helligkeitsregelung initialisieren
+    setupTimer2();
+    sei();       // Globale Interrupts aktivieren
+
+    disablePeripherie();
+
+    while (1) {
+        enterSleepMode();
     }
 
-    return 0;  // Dies wird nie erreicht
+    return 0;  // Wird nie erreicht
 }
