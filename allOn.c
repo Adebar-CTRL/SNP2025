@@ -8,6 +8,9 @@ volatile uint8_t seconds = 0;
 volatile uint8_t minutes = 0;
 volatile uint8_t hours = 0;
 
+// Kumulierte Abweichung
+volatile double error = 0.0;
+
 // Helligkeitsstufen für PWM
 int currentBrightnessLevel = 1;
 const uint8_t brightness_levels[] = {255, 254, 248, 156, 0};
@@ -106,11 +109,21 @@ void displayTime(void) {
     PORTD = (PORTD & 0x07) | ((hours & 0x1F) << 3);
 }
 
+// Addiert den gmessenen Feheler jede Sekunde und prüft ob eine Schaltsekunde entsteht
+void check_error(void){
+    error = error + 0.01875;  // Fehlende Sekunden pro gezählte Sekunde
+    if (error >= 1.0) { // Wenn sich eine Schaltsekunde Summiert hat:
+        seconds++;
+        error = error - 1.0;
+    }
+}
+
 // Uhrzeit aktualisieren
 void updateClock(void) {
     seconds++;
+    check_error();
     if (seconds >= 60) {
-        seconds = 0;
+        seconds = seconds - 60;
         minutes++;
         if (minutes >= 60) {
             minutes = 0;
